@@ -1,0 +1,48 @@
+# Environment & secrets
+.env
+*.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Package files
+*.tar.gz
+*.zip
+
+# n8n (sensitive workflow data)
+n8n/
+
+# Streamlit cache
+.streamlit/

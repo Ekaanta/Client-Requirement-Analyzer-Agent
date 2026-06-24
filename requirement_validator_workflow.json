@@ -1,0 +1,157 @@
+{
+  "name": "Requirement Validator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "requirement-validator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst figmaUrl = body.figma_url || '';\nconst match = figmaUrl.match(/figma\\.com\\/(?:file|design)\\/([a-zA-Z0-9]+)/);\nif (!match) throw new Error('Invalid Figma URL');\nreturn [{ json: { file_key: match[1], requirements: body.requirements, figma_url: figmaUrl } }];"
+      },
+      "id": "parse-figma-url",
+      "name": "Parse Figma URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.figma.com/v1/files/{{ $json.file_key }}?depth=3",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Figma-Token",
+              "value": "={{ $env.FIGMA_ACCESS_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-figma",
+      "name": "Fetch Figma File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const figmaData = $input.first().json;\nconst requirements = $('Parse Figma URL').first().json.requirements;\nconst figmaUrl = $('Parse Figma URL').first().json.figma_url;\n\nconst document = figmaData.document || {};\nconst fileName = figmaData.name || 'Unknown';\n\nconst screens = [];\nconst components = [];\nconst textStyles = [];\nconst colors = [];\n\nfunction traverse(node, depth = 0) {\n  const type = node.type || '';\n  const name = node.name || '';\n  if (['FRAME','COMPONENT','INSTANCE'].includes(type) && depth <= 3) {\n    if (depth <= 1) screens.push(name);\n    else components.push(name);\n  }\n  if (type === 'TEXT') {\n    const style = node.style || {};\n    const entry = `${style.fontFamily || ''}/${style.fontSize || ''}px`;\n    if (style.fontFamily && !textStyles.includes(entry)) textStyles.push(entry);\n  }\n  (node.fills || []).forEach(fill => {\n    if (fill.type === 'SOLID') {\n      const c = fill.color || {};\n      const hex = `#${Math.round(c.r*255).toString(16).padStart(2,'0')}${Math.round(c.g*255).toString(16).padStart(2,'0')}${Math.round(c.b*255).toString(16).padStart(2,'0')}`;\n      if (!colors.includes(hex)) colors.push(hex);\n    }\n  });\n  (node.children || []).forEach(child => traverse(child, depth + 1));\n}\ntraverse(document);\n\nconst uniqueScreens = [...new Set(screens)].slice(0, 30);\nconst uniqueComponents = [...new Set(components)].slice(0, 60);\n\nreturn [{ json: {\n  requirements,\n  figma_url: figmaUrl,\n  design_summary: {\n    file_name: fileName,\n    screens: uniqueScreens,\n    components: uniqueComponents,\n    text_styles: [...new Set(textStyles)].slice(0, 20),\n    colors: [...new Set(colors)].slice(0, 30)\n  }\n} }];"
+      },
+      "id": "extract-design",
+      "name": "Extract Design Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst ds = data.design_summary;\n\nconst systemPrompt = `You are an expert UI/UX Requirement Validation Analyst and QA Engineer.\\nYour job is to compare software requirements against a Figma design summary and identify ALL mismatches.\\nYou MUST respond with a single valid JSON object and nothing else.\\nJSON schema:\\n{\\n  \"overall_score\": <int 0-100>,\\n  \"requirement_coverage\": <float 0-100>,\\n  \"ai_summary\": \"<string>\",\\n  \"issues\": [\\n    {\\n      \"category\": \"<Requirement Coverage|Missing Screen|Missing Component|Missing Button|Missing Form|Missing Input|Missing Navigation|Missing Validation|Missing State|Typography|Color|Spacing|Responsive|Accessibility|UI Consistency|UX Problem|Business Logic|Design Quality>\",\\n      \"severity\": \"<critical|high|medium|low>\",\\n      \"title\": \"<string>\",\\n      \"description\": \"<string>\",\\n      \"location\": \"<screen or null>\",\\n      \"recommendation\": \"<string>\"\\n    }\\n  ]\\n}`;\n\nconst userPrompt = `Analyze:\\n\\n=== SOFTWARE REQUIREMENTS ===\\n${data.requirements}\\n\\n=== FIGMA DESIGN SUMMARY ===\\nFile: ${ds.file_name}\\nScreens: ${ds.screens.join(', ') || 'None'}\\nComponents: ${ds.components.join(', ') || 'None'}\\nText styles: ${ds.text_styles.join(', ') || 'None'}\\nColors: ${ds.colors.join(', ') || 'None'}\\n\\nIdentify every mismatch. Return ONLY the JSON object.`;\n\nreturn [{ json: { system_prompt: systemPrompt, user_prompt: userPrompt, design_summary: ds } }];"
+      },
+      "id": "build-prompt",
+      "name": "Build AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.x.ai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.GROK_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"grok-3-mini\",\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"{{ $json.system_prompt }}\"},\n    {\"role\": \"user\", \"content\": \"{{ $json.user_prompt }}\"}\n  ],\n  \"temperature\": 0.2,\n  \"max_tokens\": 4096\n}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "call-grok",
+      "name": "Call Grok AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const grokResp = $input.first().json;\nconst designSummary = $('Build AI Prompt').first().json.design_summary;\n\nlet rawContent = grokResp.choices[0].message.content.trim();\nif (rawContent.startsWith('```')) {\n  rawContent = rawContent.split('```')[1];\n  if (rawContent.startsWith('json')) rawContent = rawContent.slice(4);\n}\nrawContent = rawContent.trim();\n\nlet parsed;\ntry {\n  parsed = JSON.parse(rawContent);\n} catch(e) {\n  throw new Error('Grok returned invalid JSON: ' + e.message);\n}\n\nconst issues = (parsed.issues || []).map((issue, i) => ({\n  id: `issue-${String(i+1).padStart(3,'0')}`,\n  category: issue.category || 'General',\n  severity: ['critical','high','medium','low'].includes(issue.severity) ? issue.severity : 'medium',\n  title: issue.title || 'Unnamed issue',\n  description: issue.description || '',\n  location: issue.location || null,\n  recommendation: issue.recommendation || ''\n}));\n\nconst counts = { critical: 0, high: 0, medium: 0, low: 0 };\nissues.forEach(i => counts[i.severity] = (counts[i.severity] || 0) + 1);\n\nconst report = {\n  overall_score: Math.max(0, Math.min(100, parseInt(parsed.overall_score) || 50)),\n  requirement_coverage: Math.max(0, Math.min(100, parseFloat(parsed.requirement_coverage) || 50)),\n  total_issues: issues.length,\n  critical_count: counts.critical,\n  high_count: counts.high,\n  medium_count: counts.medium,\n  low_count: counts.low,\n  issues,\n  ai_summary: parsed.ai_summary || 'Analysis complete.',\n  figma_file_name: designSummary.file_name,\n  screens_found: designSummary.screens,\n  components_found: designSummary.components\n};\n\nreturn [{ json: report }];"
+      },
+      "id": "parse-response",
+      "name": "Parse & Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Parse Figma URL", "type": "main", "index": 0 }]]
+    },
+    "Parse Figma URL": {
+      "main": [[{ "node": "Fetch Figma File", "type": "main", "index": 0 }]]
+    },
+    "Fetch Figma File": {
+      "main": [[{ "node": "Extract Design Summary", "type": "main", "index": 0 }]]
+    },
+    "Extract Design Summary": {
+      "main": [[{ "node": "Build AI Prompt", "type": "main", "index": 0 }]]
+    },
+    "Build AI Prompt": {
+      "main": [[{ "node": "Call Grok AI", "type": "main", "index": 0 }]]
+    },
+    "Call Grok AI": {
+      "main": [[{ "node": "Parse & Build Report", "type": "main", "index": 0 }]]
+    },
+    "Parse & Build Report": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["requirement-validator"],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
