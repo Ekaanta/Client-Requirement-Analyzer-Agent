@@ -9,7 +9,7 @@ from backend.models.schemas import AnalysisReport, Issue, Severity
 logger = get_logger(__name__)
 settings = get_settings()
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 SYSTEM_PROMPT = """You are an expert UI/UX Requirement Validation Analyst and QA Engineer.
 Compare software requirements against a Figma design summary and identify ALL mismatches.
@@ -66,36 +66,35 @@ async def analyze_with_grok(
         total_nodes=design_summary.get("total_nodes", 0),
     )
 
-    full_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
-
     payload = {
-        "contents": [
-            {
-                "parts": [{"text": full_prompt}]
-            }
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
         ],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 4096,
-        }
+        "temperature": 0.2,
+        "max_tokens": 4096,
     }
 
-    url = f"{GEMINI_API_URL}?key={settings.grok_api_key}"
+    headers = {
+        "Authorization": f"Bearer {settings.grok_api_key}",
+        "Content-Type": "application/json",
+    }
 
     async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(url, json=payload)
+        resp = await client.post(GROQ_API_URL, json=payload, headers=headers)
 
-    logger.info("gemini_response", status=resp.status_code, body=resp.text[:300])
+    logger.info("groq_response", status=resp.status_code, body=resp.text[:300])
 
-    if resp.status_code == 400:
-        raise GrokError("Gemini API bad request.", detail=resp.text[:300])
+    if resp.status_code == 401:
+        raise GrokError("Groq API key invalid.")
     if resp.status_code == 429:
-        raise GrokError("Gemini rate limit exceeded.")
+        raise GrokError("Groq rate limit exceeded.")
     if resp.status_code != 200:
-        raise GrokError(f"Gemini API error: {resp.status_code}", detail=resp.text[:300])
+        raise GrokError(f"Groq API error: {resp.status_code}", detail=resp.text[:300])
 
     data = resp.json()
-    raw_content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    raw_content = data["choices"][0]["message"]["content"].strip()
 
     if raw_content.startswith("```"):
         raw_content = raw_content.split("```")[1]
