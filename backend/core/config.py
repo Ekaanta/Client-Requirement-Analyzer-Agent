@@ -1,12 +1,15 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
-from pydantic import Field
-from functools import lru_cache
+from pydantic import AliasChoices, Field
 
 
 class Settings(BaseSettings):
     # Grok AI
     grok_api_key: str = Field(default="", alias="GROK_API_KEY")
-    grok_model: str = Field(default="grok-3-mini", alias="GROK_MODEL")
+    grok_model: str = Field(
+        default="grok-3-mini",
+        validation_alias=AliasChoices("GROK_MODEL", "ROK_MODEL"),
+    )
 
     # n8n
     n8n_webhook_url: str = Field(
@@ -36,7 +39,11 @@ class Settings(BaseSettings):
 
     figma_timeout_seconds: int = 30
 
-    model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
+    model_config = {
+        "env_file": Path(__file__).resolve().parents[2] / ".env",
+        "populate_by_name": True,
+        "extra": "ignore",
+    }
 
 
 def get_settings() -> Settings:

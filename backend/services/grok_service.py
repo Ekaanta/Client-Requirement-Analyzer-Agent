@@ -67,7 +67,7 @@ async def analyze_with_grok(
     )
 
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": settings.grok_model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
