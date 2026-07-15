@@ -12,8 +12,7 @@ settings = get_settings()
 FIGMA_API_BASE = "https://api.figma.com/v1"
 
 _cache: dict = {}
-_cache_ttl = 600  # 10 minutes
-
+_cache_ttl = 86400  # 24 hours
 
 def parse_figma_url(url: str) -> tuple[str, str | None]:
     pattern = r"figma\.com/(?:file|design)/([a-zA-Z0-9]+)"
@@ -27,7 +26,7 @@ def parse_figma_url(url: str) -> tuple[str, str | None]:
 
 
 @retry(
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(1),
     wait=wait_exponential(multiplier=2, min=5, max=30),
     retry=retry_if_not_exception_type(FigmaError),
 )
