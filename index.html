@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -413,6 +414,12 @@ nav{
 
   <div class="results" id="results">
 
+<div style="display:flex;justify-content:flex-end;margin-bottom:16px">
+  <button onclick="downloadPDF()" style="padding:10px 20px;background:var(--accent);color:white;border:none;border-radius:var(--r);font-family:var(--font);font-size:13px;font-weight:600;cursor:pointer;">
+    Download Report
+  </button>
+</div>
+
     <div class="score-section">
       <div class="score-card">
         <div class="score-number" id="scoreNum">0<span class="score-denom">/100</span></div>
@@ -601,6 +608,19 @@ function filterIssues(sev,btn){
 }
 
 document.getElementById('figmaUrl').addEventListener('keydown',e=>{if(e.key==='Enter')runAnalysis()});
+
+function downloadPDF() {
+  const element = document.getElementById('results');
+  const opt = {
+    margin: 10,
+    filename: 'requirement-validation-report.pdf',
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+  html2pdf().set(opt).from(element).save();
+}
+
 </script>
 </body>
 </html>
