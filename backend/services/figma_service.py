@@ -1,5 +1,7 @@
 import re
 import time
+import os
+import json
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_not_exception_type
 from backend.core.config import get_settings
@@ -10,9 +12,33 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 FIGMA_API_BASE = "https://api.figma.com/v1"
-
-_cache: dict = {}
+CACHE_FILE = "/tmp/figma_cache.json"
 _cache_ttl = 86400  # 24 hours
+_cache: dict = {}
+
+
+def _load_cache() -> None:
+    global _cache
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r") as f:
+                _cache = json.load(f)
+            logger.info("figma_cache_loaded", keys=list(_cache.keys()))
+    except Exception as e:
+        logger.warning("figma_cache_load_failed", error=str(e))
+        _cache = {}
+
+
+def _save_cache() -> None:
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(_cache, f)
+    except Exception as e:
+        logger.warning("figma_cache_save_failed", error=str(e))
+
+
+_load_cache()
+
 
 def parse_figma_url(url: str) -> tuple[str, str | None]:
     pattern = r"figma\.com/(?:file|design)/([a-zA-Z0-9]+)"
@@ -31,7 +57,6 @@ def parse_figma_url(url: str) -> tuple[str, str | None]:
     retry=retry_if_not_exception_type(FigmaError),
 )
 async def fetch_figma_file(file_key: str) -> dict:
-    # Cache check — avoid repeated API calls
     cached = _cache.get(file_key)
     if cached and time.time() - cached["ts"] < _cache_ttl:
         logger.info("figma_cache_hit", file_key=file_key)
@@ -57,6 +82,7 @@ async def fetch_figma_file(file_key: str) -> dict:
 
     data = resp.json()
     _cache[file_key] = {"data": data, "ts": time.time()}
+    _save_cache()
     logger.info("figma_fetch_success", file_key=file_key, name=data.get("name"))
     return data
 
@@ -118,26 +144,19 @@ def _count_nodes(node: dict) -> int:
         count += _count_nodes(child)
     return count
 
-async def export_figma_screens(file_key: str, node_ids: list[str]) -> dict[str, str]:
-    """Export Figma screens as images and return base64 encoded."""
-    import base64
 
+async def export_figma_screens(file_key: str, node_ids: list[str]) -> dict[str, str]:
+    import base64
     if not settings.figma_access_token:
         raise FigmaError("FIGMA_ACCESS_TOKEN is not configured.")
-
     headers = {"X-Figma-Token": settings.figma_access_token}
-    ids = ",".join(node_ids[:5])  # Max 5 screens to avoid rate limit
+    ids = ",".join(node_ids[:5])
     url = f"{FIGMA_API_BASE}/images/{file_key}?ids={ids}&format=png&scale=1"
-
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.get(url, headers=headers)
-
     if resp.status_code != 200:
         raise FigmaError(f"Figma image export failed: {resp.status_code}")
-
     image_urls = resp.json().get("images", {})
-
-    # Download each image and convert to base64
     images_b64: dict[str, str] = {}
     async with httpx.AsyncClient(timeout=60) as client:
         for node_id, img_url in image_urls.items():
@@ -146,15 +165,12 @@ async def export_figma_screens(file_key: str, node_ids: list[str]) -> dict[str, 
                 if img_resp.status_code == 200:
                     b64 = base64.b64encode(img_resp.content).decode("utf-8")
                     images_b64[node_id] = b64
-
     return images_b64
 
 
 def extract_node_ids(figma_data: dict) -> list[str]:
-    """Extract top-level frame node IDs (screens)."""
     node_ids = []
     document = figma_data.get("document", {})
-
     def traverse(node: dict, depth: int = 0) -> None:
         if node.get("type") == "FRAME" and depth <= 1:
             node_id = node.get("id", "")
@@ -162,6 +178,5 @@ def extract_node_ids(figma_data: dict) -> list[str]:
                 node_ids.append(node_id)
         for child in node.get("children", []):
             traverse(child, depth + 1)
-
     traverse(document)
-    return node_ids[:5]  # First 5 screens only
+    return node_ids[:5]
